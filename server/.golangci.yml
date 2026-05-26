@@ -1,0 +1,135 @@
+# golangci-lint config (v2 schema). Run via: `cd server && golangci-lint run`.
+# The linter set is conservative: compile-level checks plus a few style /
+# security ones.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # Compile-level.
+    - govet
+    - staticcheck
+    - ineffassign
+    - errcheck
+    - unused
+    # Style.
+    - misspell
+    - whitespace
+    # Security / correctness.
+    - bodyclose
+    - errorlint
+    - gosec
+    # Architecture / layering.
+    - depguard
+    # Tests.
+    - tparallel
+    - thelper
+
+  settings:
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment   # noisy for hand-tuned domain structs
+        - shadow
+    gosec:
+      excludes:
+        - G104   # we explicitly ignore some Close() returns
+        - G115   # int-conversion noise on safe constants
+    misspell:
+      locale: US
+    depguard:
+      # Layered architecture (DDD-lite): domain → port → usecase → adapter.
+      # See AGENTS.md "Coding rules" section.
+      rules:
+        domain:
+          list-mode: lax
+          files:
+            - '**/internal/domain/**'
+          deny:
+            - pkg: github.com/sendgo/sendgo/server/internal/port
+              desc: "domain must not depend on port (invariant: port → domain only)"
+            - pkg: github.com/sendgo/sendgo/server/internal/usecase
+              desc: "domain must not depend on use cases"
+            - pkg: github.com/sendgo/sendgo/server/internal/adapter
+              desc: "domain must not depend on adapters"
+            - pkg: net/http
+              desc: "domain is transport-agnostic; HTTP lives in adapter/http"
+            - pkg: database/sql
+              desc: "domain is store-agnostic; persistence is behind port.MetaStore"
+        port:
+          # Only direct children of internal/port/, NOT portfakes (which is test
+          # infrastructure that may import test helpers freely).
+          list-mode: lax
+          files:
+            - '**/internal/port/*.go'
+          deny:
+            - pkg: github.com/sendgo/sendgo/server/internal/adapter
+              desc: "ports must not depend on adapters"
+            - pkg: github.com/sendgo/sendgo/server/internal/usecase
+              desc: "ports must not depend on use cases"
+            - pkg: net/http
+              desc: "ports stay transport-agnostic"
+            - pkg: github.com/redis/go-redis
+              desc: "concrete Redis client lives in adapter/meta"
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: "concrete S3 client lives in adapter/storage"
+        usecase:
+          list-mode: lax
+          files:
+            - '**/internal/usecase/**'
+          deny:
+            - pkg: github.com/sendgo/sendgo/server/internal/adapter
+              desc: "use cases must see external systems only through port interfaces"
+            - pkg: net/http
+              desc: "use cases must not know about HTTP"
+            - pkg: github.com/go-chi/chi
+              desc: "HTTP routing belongs in adapter/http"
+            - pkg: github.com/redis/go-redis
+              desc: "Redis access must go through port.MetaStore"
+            - pkg: github.com/aws/aws-sdk-go-v2
+              desc: "S3 access must go through port.BlobStorage"
+            - pkg: github.com/gorilla/websocket
+              desc: "WS framing belongs in adapter/http"
+            - pkg: database/sql
+              desc: "SQL is not part of this project"
+            - pkg: github.com/getsentry/sentry-go
+              desc: "Sentry is plumbed through observability adapter"
+        portfakes-not-in-production:
+          # portfakes is test infrastructure; never import it from prod code.
+          list-mode: lax
+          files:
+            - '$all'
+            - '!$test'
+            - '!**/internal/port/portfakes/**'
+          deny:
+            - pkg: github.com/sendgo/sendgo/server/internal/port/portfakes
+              desc: "portfakes are for tests only — production code must use real adapters"
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/sendgo/sendgo/server
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

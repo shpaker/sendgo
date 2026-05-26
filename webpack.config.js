@@ -205,11 +205,6 @@ const web = {
         use: 'raw-loader'
       },
       {
-        // creates test.js for /test
-        test: require.resolve('./test/frontend/index.js'),
-        use: ['babel-loader', 'val-loader']
-      },
-      {
         // loads all assets from assets/ for use by common/assets.js
         test: require.resolve('./common/generate_asset_map.js'),
         use: ['babel-loader', 'val-loader']
@@ -236,8 +231,10 @@ const web = {
   ],
   devtool: 'source-map',
   devServer: {
-    before:
-      process.env.NODE_ENV === 'development' && require('./server/bin/dev'),
+    // Legacy `before` hook required ./server/bin/dev (the Node backend's dev
+    // entrypoint). The backend has been rewritten in Go and now lives at
+    // server/cmd/sendgo — webpack-dev-server is no longer the integration
+    // point. Run `just dev` to spin up the Go backend with the embedded SPA.
     compress: true,
     hot: false,
     host: '0.0.0.0',

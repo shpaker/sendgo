@@ -1,6 +1,7 @@
-node_modules
+node_modules/
 coverage
-dist
+coverage*.out
+coverage*.html
 .env
 .idea
 .DS_Store
@@ -8,9 +9,41 @@ dist
 .tox
 .pytest_cache
 *.iml
+
+# webpack build output (frontend). Anchored to the repo root so that
+# server/static/dist (with its .gitkeep below) isn't accidentally ignored.
+/dist/
+
+# Go build / prepare-static artifacts (embedded into the binary).
+# Ignore contents but keep .gitkeep so //go:embed has at least one match in
+# CI before `just prepare-static` runs.
+bin/
+server/static/dist/*
+!server/static/dist/.gitkeep
+server/static/locales/*
+!server/static/locales/.gitkeep
+
+# Local dev state (in-memory mode + FS blob).
+# The binary writes to --file-dir; justfile defaults to server/tmp/blobs,
+# but running from repo root produces ./tmp/blobs.
+server/tmp/
+tmp/
+var/
+
+# Android/iOS — kept as-is.
 android/app/src/main/assets
 ios/send-ios/assets/ios.js
 ios/send-ios/assets/vendor.js
 ios/send-ios.xcodeproj/project.xcworkspace/xcuserdata/*
 ios/send-ios.xcodeproj/xcuserdata/*
-test/integration/downloads
+
+# Tests.
+*.test
+*.out
+coverage.txt
+
+# Sentry, debug.
+*.log
+
+# Claude Code harness state (lockfiles, transient task state)
+.claude/

@@ -23,6 +23,10 @@ up-to-date and alive.
 - Dependencies have been updated
 - Mozilla's [changes][mozilla-patches] since the fork have been selectively [merged][mozilla-patches-pr]
 - Mozilla's experimental report feature, download tokens, trust warnings and FxA changes are not included
+- **Backend rewritten in Go** — single self-contained binary, optional Redis/S3,
+  in-process cleanup of orphaned blobs. The public API (URLs, HMAC+nonce auth,
+  WebSocket upload protocol, `/config` JSON) is 1:1 with the upstream Node
+  server, so the frontend is unchanged.
 
 Find an up-to-date Docker image here: [docs/docker.md](docs/docker.md)
 
@@ -81,9 +85,12 @@ A file sharing experiment which allows you to send encrypted files to other user
 
 ## Requirements
 
-- [Node.js 16.x](https://nodejs.org/)
-- [Redis server](https://redis.io/) (optional for development)
-- [AWS S3](https://aws.amazon.com/s3/) or compatible service (optional)
+- [Go 1.23+](https://go.dev/) (to build the backend)
+- [Node.js 16.x](https://nodejs.org/) (to build the frontend bundle)
+- [`just`](https://github.com/casey/just) (`brew install just`) for the dev recipes
+- [Redis server](https://redis.io/) (optional — in-memory store is used by default)
+- [S3-compatible object storage](https://aws.amazon.com/s3/), e.g. Yandex Object
+  Storage (optional — local filesystem is used by default)
 
 ---
 
@@ -92,11 +99,14 @@ A file sharing experiment which allows you to send encrypted files to other user
 To start an ephemeral development server, run:
 
 ```sh
-npm install
-npm start
+just dev
 ```
 
-Then, browse to http://localhost:8080
+Then, browse to http://localhost:1443
+
+`just dev` builds the frontend with webpack, copies it into `server/static/`
+for `//go:embed`, and runs the Go server with sane defaults (in-memory
+metadata, local FS blob storage, cleanup goroutine on).
 
 ---
 
@@ -104,18 +114,25 @@ Then, browse to http://localhost:8080
 
 | Command          | Description |
 |------------------|-------------|
-| `npm run format` | Formats the frontend and server code using **prettier**.
+| `npm run format` | Formats the frontend code using **prettier**.
 | `npm run lint`   | Lints the CSS and JavaScript code.
-| `npm test`       | Runs the suite of mocha tests.
-| `npm start`      | Runs the server in development configuration.
-| `npm run build`  | Builds the production assets.
-| `npm run prod`   | Runs the server in production configuration.
+| `just test`      | Runs the Go unit tests (`go test -race`).
+| `just dev`       | Runs the server in development configuration.
+| `just build`     | Builds the frontend bundle and the Go binary into `bin/sendgo`.
+| `just run`       | Runs the compiled binary with development defaults; extra flags are forwarded (`just run --redis-dsn=redis://localhost:6379/0`).
+| `just run-prod`  | Same as `just run` but with json logs and `--file-dir=./var/blobs`.
 
 ---
 
 ## Configuration
 
-The server is configured with environment variables. See [server/config.js](server/config.js) for all options and [docs/docker.md](docs/docker.md) for examples.
+The server is configured with CLI flags or environment variables. Every flag
+has an environment-variable equivalent; the env names match the upstream
+Node server so existing `.env` files keep working. Flag priority:
+**flag > env > default**.
+
+See `./bin/sendgo --help` for the full list (server, limits, meta store,
+blob storage, cleanup, observability, branding).
 
 ---
 

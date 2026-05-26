@@ -1,0 +1,138 @@
+name: ci
+
+on:
+  push:
+    branches: [main, feat/**, fix/**, refactor/**, docs/**, ci/**, chore/**, perf/**, test/**, build/**]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs when a new commit lands on the same branch / PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  # ---------- backend (Go) ----------
+
+  backend-lint:
+    name: backend / lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: server/go.sum
+
+      - name: go vet
+        working-directory: server
+        run: go vet ./...
+
+      - name: gofmt diff
+        working-directory: server
+        run: |
+          diff=$(gofmt -l .)
+          if [ -n "$diff" ]; then
+            echo "::error::gofmt would change these files:"
+            echo "$diff"
+            exit 1
+          fi
+
+      - name: golangci-lint
+        # v8+ understands the golangci-lint v2 config schema (default,
+        # settings, formatters, version keys); v6/v7 still validate against
+        # the v1 schema and reject our config.
+        uses: golangci/golangci-lint-action@v8
+        with:
+          # Build golangci-lint from source via `go install` against the Go
+          # version installed by setup-go above. Prebuilt release binaries
+          # for v2.12.x are still compiled with Go 1.24, which refuses to
+          # load a config targeting `go 1.25` (pulled in by transitive
+          # aws-sdk-go-v2 deps).
+          install-mode: goinstall
+          version: latest
+          working-directory: server
+          args: --timeout=5m
+
+  backend-test:
+    name: backend / test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: server/go.sum
+
+      - name: go build
+        working-directory: server
+        run: go build ./...
+
+      - name: go test -race
+        working-directory: server
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: server/coverage.out
+          if-no-files-found: ignore
+
+  # ---------- frontend (JS) ----------
+
+  frontend-lint:
+    name: frontend / lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "16"
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: lint:js
+        run: npm run lint:js
+        # Legacy ESLint config has stale plugins; warnings allowed, errors fail the job.
+
+      - name: lint:css
+        run: npm run lint:css
+
+      # `lint-locales` shells out to the `compare-locales` Python tool (Mozilla
+      # l10n tooling, not an npm dependency). Skipped in CI to avoid pulling
+      # in a Python venv just for an inherited script; run it locally when
+      # touching locales.
+
+  frontend-build:
+    name: frontend / build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "16"
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: webpack build
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
