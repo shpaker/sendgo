@@ -3,7 +3,10 @@
 const cp = require('child_process');
 const { promisify } = require('util');
 const pkg = require('../package.json');
-const conf = require('../server/config');
+
+// The legacy Node config (server/config.js) is gone — the backend is now in
+// Go. We only used its `env` field below; read NODE_ENV directly instead.
+const conf = { env: process.env.NODE_ENV || 'development' };
 
 const exec = promisify(cp.exec);
 const cmd = `compare-locales l10n.toml . ${getLocales()} --data=json`;

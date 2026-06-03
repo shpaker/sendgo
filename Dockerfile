@@ -1,73 +1,44 @@
-##
-# Send
+# sendgo — single-binary, single-container build.
 #
-# License https://gitlab.com/timvisee/send/blob/master/LICENSE
-##
+# Stage 1: собираем фронт через webpack (как раньше).
+# Stage 2: копируем dist/+locales/ в server/static/, собираем Go-бинарь с //go:embed.
+# Stage 3: distroless runtime, один бинарь, ENTRYPOINT — он же.
 
-# Build project
-FROM node:16.13-alpine3.13 AS builder
-
-RUN set -x \
-  # Change node uid/gid
-  && apk --no-cache add shadow \
-  && groupmod -g 1001 node \
-  && usermod -u 1001 -g 1001 node
-
-RUN set -x \
-    # Add user
-    && addgroup --gid 1000 app \
-    && adduser --disabled-password \
-        --gecos '' \
-        --ingroup app \
-        --home /app \
-        --uid 1000 \
-        app
-
-COPY --chown=app:app . /app
-
-USER app
+# ---------- stage 1: frontend ----------
+FROM node:16-alpine AS frontend
 WORKDIR /app
+COPY package*.json ./
+RUN PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true npm ci
+COPY app/ ./app/
+COPY common/ ./common/
+COPY public/ ./public/
+COPY assets/ ./assets/
+COPY assets_src/ ./assets_src/
+COPY build/ ./build/
+COPY webpack.config.js postcss.config.js tailwind.config.js browserslist ./
+COPY .babelrc* ./
+RUN npm run build
 
-RUN set -x \
-    # Build
-    && PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true npm ci \
-    && npm run build
+# ---------- stage 2: Go build ----------
+FROM golang:1.25-alpine AS backend
+WORKDIR /src
+COPY server/ ./server/
 
-# Main image
-FROM node:16.13-alpine3.13
+# Эмбедим артефакты сборки фронта в исходники Go перед `go build`.
+COPY --from=frontend /app/dist           /src/server/static/dist
+COPY --from=frontend /app/public/locales /src/server/static/locales
 
-RUN set -x \
-  # Change node uid/gid
-  && apk --no-cache add shadow \
-  && groupmod -g 1001 node \
-  && usermod -u 1001 -g 1001 node
+WORKDIR /src/server
+RUN go mod download
+ARG COMMIT=unknown
+ARG VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath \
+    -ldflags="-s -w -X github.com/sendgo/sendgo/server/internal/config.Version=${VERSION} -X github.com/sendgo/sendgo/server/internal/config.Commit=${COMMIT}" \
+    -o /out/sendgo ./cmd/sendgo
 
-RUN set -x \
-    # Add user
-    && addgroup --gid 1000 app \
-    && adduser --disabled-password \
-        --gecos '' \
-        --ingroup app \
-        --home /app \
-        --uid 1000 \
-        app
-
-USER app
-WORKDIR /app
-
-COPY --chown=app:app package*.json ./
-COPY --chown=app:app app app
-COPY --chown=app:app common common
-COPY --chown=app:app public/locales public/locales
-COPY --chown=app:app server server
-COPY --chown=app:app --from=builder /app/dist dist
-
-RUN npm ci --production && npm cache clean --force
-RUN mkdir -p /app/.config/configstore
-RUN ln -s dist/version.json version.json
-
-ENV PORT=1443
-
-EXPOSE ${PORT}
-
-CMD ["node", "server/bin/prod.js"]
+# ---------- stage 3: runtime ----------
+FROM gcr.io/distroless/static:nonroot
+COPY --from=backend /out/sendgo /sendgo
+USER nonroot:nonroot
+EXPOSE 1443
+ENTRYPOINT ["/sendgo"]

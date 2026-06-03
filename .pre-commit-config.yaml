@@ -1,0 +1,81 @@
+# prek / pre-commit hooks for sendgo.
+#
+# Install:
+#   prek install                         (or `pre-commit install` if using pre-commit)
+#   prek install --hook-type commit-msg  (enables conventional-commits check)
+#
+# Run on all files:
+#   prek run --all-files
+
+default_install_hook_types:
+  - pre-commit
+  - commit-msg
+
+repos:
+  # ----- generic file hygiene -----
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^(server/static/dist/|dist/|public/locales/)
+      - id: end-of-file-fixer
+        exclude: ^(server/static/dist/|dist/|public/locales/|server/go\.sum$)
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+        exclude: ^public/locales/        # FTL/JSON quirks in upstream locale data
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+      - id: detect-private-key
+      - id: forbid-submodules
+
+  # ----- backend: Go -----
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        files: ^server/.*\.go$
+      - id: go-imports
+        files: ^server/.*\.go$
+        args: [-local, github.com/sendgo/sendgo/server]
+      - id: go-vet-pkg
+        files: ^server/.*\.go$
+        # Run from inside server/ so go.mod is picked up.
+        args: [-C, server, ./...]
+      - id: go-mod-tidy
+        files: ^server/(go\.mod|go\.sum|.*\.go)$
+        args: [-C, server]
+      - id: golangci-lint
+        files: ^server/.*\.go$
+        args: [-C, server, ./...]
+
+  # ----- frontend: JS/CSS -----
+  # eslint/stylelint hooks are heavy and depend on node_modules; instead we
+  # rely on the GitHub Actions workflow for full frontend lint.  The
+  # pre-commit pass keeps only fast checks below.
+
+  # ----- conventional commits -----
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.0.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args:
+          - --strict
+          # Allowed types (see AGENTS.md rule 6):
+          - feat
+          - fix
+          - docs
+          - style
+          - refactor
+          - perf
+          - test
+          - build
+          - ci
+          - chore
+          - revert

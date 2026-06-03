@@ -1,0 +1,1 @@
+# Placeholder so //go:embed has at least one match in CI before just prepare-static runs.
