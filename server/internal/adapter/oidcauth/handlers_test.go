@@ -170,12 +170,27 @@ func TestLogin_AuthenticatedUserBouncesHome(t *testing.T) {
 	}
 }
 
-func TestLogout_ClearsSessionCookie(t *testing.T) {
-	_, h := testHandlers(t)
+func TestLogout_ClearsCookieAndEndsProviderSession(t *testing.T) {
+	idp, h := testHandlers(t)
 	rec := httptest.NewRecorder()
 	h.Logout(rec, httptest.NewRequest(http.MethodGet, "/oidc/logout", nil))
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("bad Location: %v", err)
+	}
+	// RP-initiated logout: must leave for the provider's end-session endpoint,
+	// otherwise the live SSO session silently logs the user right back in.
+	if got, want := loc.Scheme+"://"+loc.Host+loc.Path, idp.IssuerURL()+"/end-session"; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+	if loc.Query().Get("client_id") != idp.ClientID {
+		t.Errorf("client_id = %q, want %q", loc.Query().Get("client_id"), idp.ClientID)
+	}
+	if got, want := loc.Query().Get("post_logout_redirect_uri"), "http://sendgo.test/"; got != want {
+		t.Errorf("post_logout_redirect_uri = %q, want %q", got, want)
 	}
 	var cleared bool
 	for _, c := range rec.Result().Cookies() {
@@ -185,5 +200,31 @@ func TestLogout_ClearsSessionCookie(t *testing.T) {
 	}
 	if !cleared {
 		t.Error("session cookie not cleared")
+	}
+}
+
+func TestLogout_LocalOnlyWithoutEndSessionEndpoint(t *testing.T) {
+	idp := oidctest.New(t)
+	idp.NoEndSession = true
+	cfg := &config.CLI{
+		OIDCIssuerURL:    idp.IssuerURL(),
+		OIDCClientID:     idp.ClientID,
+		OIDCClientSecret: "s3cret",
+		OIDCCookieSecret: testSecret,
+		OIDCSessionTTL:   time.Hour,
+	}
+	svc, err := oidcauth.New(context.Background(), cfg, testLogger())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	h := &oidcauth.Handlers{Svc: svc, ResolveBaseURL: func(*http.Request) string { return "http://sendgo.test" }}
+
+	rec := httptest.NewRecorder()
+	h.Logout(rec, httptest.NewRequest(http.MethodGet, "/oidc/logout", nil))
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Errorf("Location = %q, want / (local-only fallback)", loc)
 	}
 }

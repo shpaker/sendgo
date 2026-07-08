@@ -36,6 +36,10 @@ type FakeIDP struct {
 	Sub      string
 	Email    string
 	Name     string
+
+	// NoEndSession removes end_session_endpoint from discovery (read at
+	// request time — flip it before oidcauth.New runs discovery).
+	NoEndSession bool
 }
 
 // New starts a fake IdP. The httptest server URL is the issuer.
@@ -56,7 +60,7 @@ func New(t *testing.T) *FakeIDP {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		iss := f.Server.URL
-		writeJSON(w, map[string]any{
+		doc := map[string]any{
 			"issuer":                                iss,
 			"authorization_endpoint":                iss + "/auth",
 			"token_endpoint":                        iss + "/token",
@@ -64,7 +68,11 @@ func New(t *testing.T) *FakeIDP {
 			"response_types_supported":              []string{"code"},
 			"subject_types_supported":               []string{"public"},
 			"id_token_signing_alg_values_supported": []string{"RS256"},
-		})
+		}
+		if !f.NoEndSession {
+			doc["end_session_endpoint"] = iss + "/end-session"
+		}
+		writeJSON(w, doc)
 	})
 	mux.HandleFunc("/keys", func(w http.ResponseWriter, r *http.Request) {
 		pub := &f.Key.PublicKey

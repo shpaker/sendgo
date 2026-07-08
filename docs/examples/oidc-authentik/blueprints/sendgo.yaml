@@ -26,8 +26,13 @@ entries:
           authentik_flows.flow,
           [slug, default-provider-authorization-implicit-consent],
         ]
+      # default-invalidation-flow ends the WHOLE authentik SSO session on
+      # sign-out, so "Sign out" in sendgo behaves the way users expect. The
+      # UI-wizard default (default-provider-invalidation-flow) only shows a
+      # "logged out of application" page and keeps the SSO session alive —
+      # revisiting sendgo would silently log you back in.
       invalidation_flow:
-        !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+        !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
       # Scope mappings are pre-selected in the admin-UI wizard but NOT applied
       # by default when creating via API/blueprint — without them the id_token
       # carries no email/name claims.

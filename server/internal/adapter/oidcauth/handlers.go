@@ -4,6 +4,7 @@ import (
 	cryptorand "crypto/rand"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -177,13 +178,35 @@ func (h *Handlers) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// Logout clears the local session and returns to the home page. RP-initiated
-// logout at the provider is out of scope: the stateless cookie retains no
-// id_token_hint.
+// Logout clears the local session and performs RP-initiated logout at the
+// provider (when it advertises an end_session_endpoint). Redirecting to "/"
+// instead would silently log the user right back in: "/" bounces to the
+// provider, whose live SSO session re-issues a code without showing a login
+// form — sign-out would appear to do nothing.
+//
+// The stateless cookie retains no id_token, so no id_token_hint is sent;
+// client_id accompanies post_logout_redirect_uri instead (RP-initiated
+// logout spec permits either).
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
-	secure := isHTTPS(h.ResolveBaseURL(r))
-	clearCookie(w, sessionCookie, "/", secure)
-	http.Redirect(w, r, "/", http.StatusFound)
+	baseURL := h.ResolveBaseURL(r)
+	clearCookie(w, sessionCookie, "/", isHTTPS(baseURL))
+
+	es := h.Svc.endSessionURL
+	if es == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	u, err := url.Parse(es)
+	if err != nil {
+		observability.FromContext(r.Context()).Warn("oidc logout: bad end_session_endpoint", "url", es, "err", err)
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	q := u.Query()
+	q.Set("client_id", h.Svc.cfg.OIDCClientID)
+	q.Set("post_logout_redirect_uri", baseURL+"/")
+	u.RawQuery = q.Encode()
+	http.Redirect(w, r, u.String(), http.StatusFound)
 }
 
 // randomToken returns 32 random bytes as unpadded URL-safe base64 — used for

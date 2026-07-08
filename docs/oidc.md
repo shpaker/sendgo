@@ -82,6 +82,18 @@ sendgo \
   but need a valid session cookie.
 - CLI clients such as `ffsend` cannot log in interactively and therefore
   cannot upload while OIDC is enabled (downloading keeps working).
-- Logout (`/oidc/logout`) clears the local session only; it does not end the
-  provider session (no RP-initiated logout — the stateless cookie keeps no
-  `id_token_hint`).
+- Logout (`/oidc/logout`) clears the local session and then performs
+  RP-initiated logout: the user is redirected to the provider's
+  `end_session_endpoint` (with `client_id` and `post_logout_redirect_uri`;
+  no `id_token_hint` — the stateless cookie keeps no id_token). Without
+  ending the provider session a logout is cosmetic: `/` immediately bounces
+  back through the provider, whose live SSO session re-issues a code without
+  showing a login form. If the provider advertises no `end_session_endpoint`,
+  sendgo falls back to clearing the local cookie only and logs a startup
+  warning.
+- **Authentik note:** what "end session" means is decided by the provider's
+  *invalidation flow*. The admin-UI default (`default-provider-invalidation-flow`)
+  only shows a "You've logged out of…" page and keeps the SSO session — users
+  get silently re-logged next visit. Pick `default-invalidation-flow` on the
+  provider if sign-out should end the whole authentik session (this is what
+  the [compose example](examples/oidc-authentik/blueprints/sendgo.yaml) does).

@@ -26,6 +26,13 @@ type Service struct {
 	verifier *oidc.IDTokenVerifier
 	codec    codec
 	log      *slog.Logger
+
+	// endSessionURL is the provider's RP-initiated-logout endpoint from
+	// discovery ("" when not advertised). Without it a local-only logout is
+	// useless in practice: "/" bounces straight back through the provider,
+	// whose live SSO session silently re-issues a code — signing out would
+	// appear to do nothing.
+	endSessionURL string
 }
 
 // New builds the Service, or returns (nil, nil) when the OIDC flags are not
@@ -60,13 +67,21 @@ func New(ctx context.Context, cfg *config.CLI, lg *slog.Logger) (*Service, error
 	if err != nil {
 		return nil, fmt.Errorf("oidc: provider discovery (%s): %w", issuer, err)
 	}
+	var extra struct {
+		EndSessionEndpoint string `json:"end_session_endpoint"`
+	}
+	if err := provider.Claims(&extra); err == nil && extra.EndSessionEndpoint == "" {
+		lg.Warn("oidc: provider advertises no end_session_endpoint — " +
+			"sign-out clears the local session only and the SSO session may log users straight back in")
+	}
 
 	return &Service{
-		cfg:      cfg,
-		provider: provider,
-		verifier: provider.Verifier(&oidc.Config{ClientID: clientID}),
-		codec:    codec{secret: cookieSecret},
-		log:      lg.With("component", "oidc"),
+		cfg:           cfg,
+		provider:      provider,
+		verifier:      provider.Verifier(&oidc.Config{ClientID: clientID}),
+		codec:         codec{secret: cookieSecret},
+		log:           lg.With("component", "oidc"),
+		endSessionURL: extra.EndSessionEndpoint,
 	}, nil
 }
 
