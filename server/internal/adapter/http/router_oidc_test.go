@@ -183,7 +183,10 @@ func TestDownloadPage_PublicWhenOIDCEnabled(t *testing.T) {
 func wsDial(t *testing.T, srv *httptest.Server, hdr http.Header) *websocket.Conn {
 	t.Helper()
 	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/ws"
-	conn, _, err := websocket.DefaultDialer.Dial(url, hdr)
+	conn, resp, err := websocket.DefaultDialer.Dial(url, hdr)
+	if resp != nil {
+		defer func() { _ = resp.Body.Close() }()
+	}
 	if err != nil {
 		t.Fatalf("ws dial: %v", err)
 	}

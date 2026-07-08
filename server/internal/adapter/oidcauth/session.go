@@ -105,7 +105,10 @@ func expired(expUnix int64, now time.Time) bool {
 // SameSite=Lax is deliberate: the IdP→callback hop is a cross-site top-level
 // GET and Strict would withhold the flow cookie, breaking state verification.
 func setCookie(w http.ResponseWriter, name, value, path string, maxAge time.Duration, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	// gosec G124 wants a statically-true Secure flag; ours is derived from the
+	// public scheme because plain-HTTP deployments (local dev, LAN) are
+	// supported deliberately. HttpOnly and SameSite are always set.
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec
 		Name:     name,
 		Value:    value,
 		Path:     path,
@@ -118,7 +121,8 @@ func setCookie(w http.ResponseWriter, name, value, path string, maxAge time.Dura
 
 // clearCookie expires a cookie immediately.
 func clearCookie(w http.ResponseWriter, name, path string, secure bool) {
-	http.SetCookie(w, &http.Cookie{
+	// Same G124 story as setCookie: Secure is conditional by design.
+	http.SetCookie(w, &http.Cookie{ //nolint:gosec
 		Name:     name,
 		Value:    "",
 		Path:     path,
