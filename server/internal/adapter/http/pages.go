@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/sendgo/sendgo/server/internal/adapter/observability"
+	"github.com/sendgo/sendgo/server/internal/adapter/oidcauth"
 	"github.com/sendgo/sendgo/server/internal/config"
 	"github.com/sendgo/sendgo/server/internal/crypto"
 	"github.com/sendgo/sendgo/server/internal/domain"
@@ -38,6 +39,11 @@ type Pages struct {
 	cfg        *config.CLI
 	meta       port.MetaStore
 	manifest   map[string]string
+
+	// SessionInfo, when non-nil, resolves the OIDC session of a request (set
+	// by the router when auth is enabled — same optional-field pattern as
+	// UploadWS.Authorize). Drives the OIDC_AUTH global the account UI reads.
+	SessionInfo func(*http.Request) *oidcauth.Session
 
 	// Pre-serialized constants — they never change after startup.
 	limitsJSON   template.JS
@@ -99,6 +105,7 @@ type pageData struct {
 	WebUIJSON            template.JS
 	DefaultsJSON         template.JS
 	DownloadMetadataJSON template.JS
+	OIDCAuthJSON         template.JS
 }
 
 // Index is the handler for `GET /`.
@@ -204,6 +211,7 @@ func (p *Pages) render(w http.ResponseWriter, r *http.Request, status int, downl
 		WebUIJSON:            p.webUIJSON,
 		DefaultsJSON:         p.defaultsJSON,
 		DownloadMetadataJSON: downloadMetadataJSON,
+		OIDCAuthJSON:         p.oidcAuthJSON(r),
 	}
 
 	var buf bytes.Buffer
@@ -231,6 +239,30 @@ func (p *Pages) render(w http.ResponseWriter, r *http.Request, status int, downl
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(buf.Bytes())
+}
+
+// oidcAuthJSON builds the OIDC_AUTH global: {"enabled":false,"user":null}
+// when auth is off, the visitor's identity when logged in, user:null when
+// enabled-but-anonymous (reachable on the public /download/* pages).
+func (p *Pages) oidcAuthJSON(r *http.Request) template.JS {
+	type oidcUser struct {
+		Email string `json:"email,omitempty"`
+		Name  string `json:"name,omitempty"`
+	}
+	payload := struct {
+		Enabled bool      `json:"enabled"`
+		User    *oidcUser `json:"user"`
+	}{}
+	if p.SessionInfo != nil {
+		payload.Enabled = true
+		if sess := p.SessionInfo(r); sess != nil {
+			payload.User = &oidcUser{Email: sess.Email, Name: sess.Name}
+		}
+	}
+	// json.Marshal of a server-built struct — same G203 story as the other
+	// inlined globals.
+	b, _ := json.Marshal(payload)
+	return template.JS(b) //nolint:gosec
 }
 
 func firstNonEmpty(a, b string) string {
@@ -298,6 +330,7 @@ const indexTemplate = `<!DOCTYPE html>
     var DEFAULTS = {{.DefaultsJSON}};
     var PREFS = {};
     var downloadMetadata = {{.DownloadMetadataJSON}};
+    var OIDC_AUTH = {{.OIDCAuthJSON}};
   </script>
   {{if .AppJS}}<script defer src="{{.AppJS}}"></script>{{end}}
 </head>

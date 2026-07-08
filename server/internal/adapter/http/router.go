@@ -74,6 +74,8 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/oidc/callback", oh.Callback)
 		r.Get("/oidc/logout", oh.Logout)
 		r.Get("/", requireSession(d.OIDC, pages.Index))
+		// Lets the SPA shell render the visitor's identity (OIDC_AUTH global).
+		pages.SessionInfo = d.OIDC.SessionFromRequest
 	} else {
 		r.Get("/", pages.Index)
 	}

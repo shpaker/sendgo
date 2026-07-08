@@ -107,6 +107,39 @@ func TestIndex_ServedWithValidSession(t *testing.T) {
 	}
 }
 
+func TestIndex_InjectsOIDCAuthGlobal(t *testing.T) {
+	svc, ck := enabledOIDC(t)
+	deps := testDeps(&config.CLI{})
+	deps.OIDC = svc
+	router := NewRouter(deps)
+
+	// Logged in on / → identity in the global.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(ck)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, `var OIDC_AUTH = {"enabled":true,"user":{"email":"user@example.com","name":"Test User"}};`) {
+		t.Errorf("OIDC_AUTH global with user missing from index body")
+	}
+
+	// Anonymous on a public download page → enabled, but no user.
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/download/aabbccddeeff0011", nil))
+	if !strings.Contains(rec.Body.String(), `var OIDC_AUTH = {"enabled":true,"user":null};`) {
+		t.Errorf("anonymous OIDC_AUTH global missing from download body")
+	}
+}
+
+func TestIndex_OIDCAuthGlobalDisabled(t *testing.T) {
+	router := NewRouter(testDeps(&config.CLI{}))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(rec.Body.String(), `var OIDC_AUTH = {"enabled":false,"user":null};`) {
+		t.Errorf("disabled OIDC_AUTH global missing from index body")
+	}
+}
+
 func TestIndex_PublicWhenOIDCDisabled(t *testing.T) {
 	router := NewRouter(testDeps(&config.CLI{}))
 	rec := httptest.NewRecorder()
