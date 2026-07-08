@@ -68,12 +68,19 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	// Path=/oidc: the cookie only travels back on /oidc/callback.
 	setCookie(w, flowCookie, flowVal, "/oidc", flowTTL, secure)
 
-	conf := h.Svc.oauthConfig(h.Svc.redirectURL(baseURL))
-	authURL := conf.AuthCodeURL(state,
+	opts := []oauth2.AuthCodeOption{
 		oidc.Nonce(nonce),
 		oauth2.S256ChallengeOption(verifier),
-	)
-	http.Redirect(w, r, authURL, http.StatusFound)
+	}
+	// One-shot marker from a local-only logout: force the account chooser so
+	// the provider's live SSO session can't silently log the user back in.
+	if _, err := r.Cookie(loggedOutCookie); err == nil {
+		clearCookie(w, loggedOutCookie, "/oidc", secure)
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "select_account"))
+	}
+
+	conf := h.Svc.oauthConfig(h.Svc.redirectURL(baseURL))
+	http.Redirect(w, r, conf.AuthCodeURL(state, opts...), http.StatusFound)
 }
 
 // Callback finishes the flow: verifies state against the flow cookie,
@@ -189,16 +196,21 @@ func (h *Handlers) Callback(w http.ResponseWriter, r *http.Request) {
 // logout spec permits either).
 func (h *Handlers) Logout(w http.ResponseWriter, r *http.Request) {
 	baseURL := h.ResolveBaseURL(r)
-	clearCookie(w, sessionCookie, "/", isHTTPS(baseURL))
+	secure := isHTTPS(baseURL)
+	clearCookie(w, sessionCookie, "/", secure)
 
 	es := h.Svc.endSessionURL
 	if es == "" {
+		// No RP-initiated logout (e.g. Google). Leave a marker so the next
+		// login is interactive — see loggedOutCookie.
+		setCookie(w, loggedOutCookie, "1", "/oidc", loggedOutTTL, secure)
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
 	u, err := url.Parse(es)
 	if err != nil {
 		observability.FromContext(r.Context()).Warn("oidc logout: bad end_session_endpoint", "url", es, "err", err)
+		setCookie(w, loggedOutCookie, "1", "/oidc", loggedOutTTL, secure)
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}

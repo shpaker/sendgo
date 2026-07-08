@@ -88,9 +88,12 @@ sendgo \
   no `id_token_hint` — the stateless cookie keeps no id_token). Without
   ending the provider session a logout is cosmetic: `/` immediately bounces
   back through the provider, whose live SSO session re-issues a code without
-  showing a login form. If the provider advertises no `end_session_endpoint`,
-  sendgo falls back to clearing the local cookie only and logs a startup
-  warning.
+  showing a login form. If the provider advertises no `end_session_endpoint`
+  (Google is the prominent example — it does not support RP-initiated
+  logout), sendgo clears the local cookie, logs a startup warning, and sets a
+  short-lived one-shot marker: the next login request carries
+  `prompt=select_account`, so the provider shows an account chooser instead
+  of silently re-issuing a session.
 - **Authentik note:** what "end session" means is decided by the provider's
   *invalidation flow*. The admin-UI default (`default-provider-invalidation-flow`)
   only shows a "You've logged out of…" page and keeps the SSO session — users

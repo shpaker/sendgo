@@ -203,7 +203,10 @@ func TestLogout_ClearsCookieAndEndsProviderSession(t *testing.T) {
 	}
 }
 
-func TestLogout_LocalOnlyWithoutEndSessionEndpoint(t *testing.T) {
+// testHandlersNoEndSession builds Handlers against an IdP that advertises no
+// end_session_endpoint (like Google).
+func testHandlersNoEndSession(t *testing.T) *oidcauth.Handlers {
+	t.Helper()
 	idp := oidctest.New(t)
 	idp.NoEndSession = true
 	cfg := &config.CLI{
@@ -217,7 +220,11 @@ func TestLogout_LocalOnlyWithoutEndSessionEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	h := &oidcauth.Handlers{Svc: svc, ResolveBaseURL: func(*http.Request) string { return "http://sendgo.test" }}
+	return &oidcauth.Handlers{Svc: svc, ResolveBaseURL: func(*http.Request) string { return "http://sendgo.test" }}
+}
+
+func TestLogout_LocalOnlyWithoutEndSessionEndpoint(t *testing.T) {
+	h := testHandlersNoEndSession(t)
 
 	rec := httptest.NewRecorder()
 	h.Logout(rec, httptest.NewRequest(http.MethodGet, "/oidc/logout", nil))
@@ -226,5 +233,53 @@ func TestLogout_LocalOnlyWithoutEndSessionEndpoint(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/" {
 		t.Errorf("Location = %q, want / (local-only fallback)", loc)
+	}
+	// The one-shot logged-out marker must be set so the next login forces an
+	// account chooser instead of a silent SSO re-login.
+	var marker *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "sendgo_logged_out" && c.Value != "" && c.MaxAge > 0 {
+			marker = c
+		}
+	}
+	if marker == nil {
+		t.Fatal("logged-out marker cookie not set")
+	}
+}
+
+func TestLogin_ForcesAccountChooserAfterLocalLogout(t *testing.T) {
+	h := testHandlersNoEndSession(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/oidc/login", nil)
+	req.AddCookie(&http.Cookie{Name: "sendgo_logged_out", Value: "1"})
+	rec := httptest.NewRecorder()
+	h.Login(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", rec.Code)
+	}
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("bad Location: %v", err)
+	}
+	if got := loc.Query().Get("prompt"); got != "select_account" {
+		t.Errorf("prompt = %q, want select_account", got)
+	}
+	// Marker is one-shot: it must be cleared alongside.
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "sendgo_logged_out" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("logged-out marker not cleared by login")
+	}
+}
+
+func TestLogin_NoPromptWithoutLogoutMarker(t *testing.T) {
+	_, h := testHandlers(t)
+	authURL, _ := oidctest.LoginRedirect(t, h)
+	if p := authURL.Query().Get("prompt"); p != "" {
+		t.Errorf("prompt = %q, want empty on a regular login", p)
 	}
 }

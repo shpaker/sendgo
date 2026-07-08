@@ -29,6 +29,13 @@ const (
 	flowCookie = "sendgo_oidc_flow"
 	// flowTTL bounds how long a login attempt may take.
 	flowTTL = 10 * time.Minute
+	// loggedOutCookie is a one-shot marker set by a local-only logout (the
+	// provider advertises no end_session_endpoint, e.g. Google). The next
+	// login adds prompt=select_account so the still-alive SSO session shows
+	// an account chooser instead of silently logging the user back in.
+	// A plain unsigned flag: forging it only makes the chooser appear.
+	loggedOutCookie = "sendgo_logged_out"
+	loggedOutTTL    = 5 * time.Minute
 	// expLeeway absorbs clock skew between replicas when checking Exp.
 	expLeeway = 30 * time.Second
 )
