@@ -132,7 +132,10 @@ Node server so existing `.env` files keep working. Flag priority:
 **flag > env > default**.
 
 See `./bin/sendgo --help` for the full list (server, limits, meta store,
-blob storage, cleanup, observability, branding).
+blob storage, cleanup, observability, branding, OIDC auth).
+
+Uploads can optionally be gated behind an OpenID Connect provider (downloads
+stay public): see [docs/oidc.md](docs/oidc.md).
 
 ---
 
@@ -161,6 +164,54 @@ See: [docs/deployment.md](docs/deployment.md)
 Docker quickstart: [docs/docker.md](docs/docker.md)
 
 AWS example using Ubuntu Server `20.04`: [docs/AWS.md](docs/AWS.md)
+
+### Docker Compose with OIDC (Authentik)
+
+A self-contained example that gates uploads behind an
+[Authentik](https://goauthentik.io) instance — provider and application are
+provisioned automatically from a blueprint, no admin-UI clicking:
+
+```sh
+cd docs/examples/oidc-authentik
+docker compose up -d
+# first boot takes a minute or two (sendgo restarts until Authentik is ready)
+open http://localhost:1443    # login: akadmin / sendgo-demo-admin
+```
+
+The gist of it (full file: [docs/examples/oidc-authentik/docker-compose.yml](docs/examples/oidc-authentik/docker-compose.yml)):
+
+```yaml
+services:
+  authentik:
+    image: ghcr.io/goauthentik/server:2025.8
+    command: server
+    ports: ['9000:9000']
+    networks:
+      default:
+        aliases:
+          - authentik.localhost # same hostname inside and outside the compose network
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2025.8
+    command: worker
+    volumes:
+      - ./blueprints:/blueprints/custom:ro # auto-creates the sendgo OAuth2 app
+
+  sendgo:
+    build: ../../..
+    restart: unless-stopped # retries until Authentik is up (discovery is fail-fast)
+    ports: ['1443:1443']
+    environment:
+      OIDC_ISSUER_URL: http://authentik.localhost:9000/application/o/sendgo/
+      OIDC_CLIENT_ID: sendgo
+      OIDC_CLIENT_SECRET: sendgo-demo-client-secret
+      OIDC_COOKIE_SECRET: demo-cookie-secret-32-chars-min!!
+```
+
+The issuer rides the `authentik.localhost` hostname: browsers resolve
+`*.localhost` to `127.0.0.1` while the compose network resolves the same name
+to the Authentik container, so the token `iss` claim matches on both sides.
+Details and non-demo setup notes: [docs/oidc.md](docs/oidc.md).
 
 ---
 

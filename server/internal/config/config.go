@@ -57,6 +57,24 @@ type CLI struct {
 	CleanupInterval  time.Duration `help:"Cleanup tick interval." default:"1m" env:"CLEANUP_INTERVAL"`
 	CleanupBatchSize int           `help:"Max items processed per cleanup tick." default:"100" env:"CLEANUP_BATCH_SIZE"`
 
+	// --- OIDC auth (optional) ---
+	// All three of issuer/client-id/client-secret must be set together to
+	// enable auth; with all of them empty the server runs open, exactly as
+	// before. Validation lives in oidcauth.New (factory idiom, like meta.New).
+	OIDCIssuerURL    string        `name:"oidc-issuer-url" help:"OIDC issuer URL (e.g. https://auth.example.com/application/o/sendgo/). Empty → auth disabled, uploads are public." group:"oidc" env:"OIDC_ISSUER_URL"`
+	OIDCClientID     string        `name:"oidc-client-id" help:"OAuth2 client ID." group:"oidc" env:"OIDC_CLIENT_ID"`
+	OIDCClientSecret string        `name:"oidc-client-secret" help:"OAuth2 client secret." group:"oidc" env:"OIDC_CLIENT_SECRET"`
+	OIDCRedirectURL  string        `name:"oidc-redirect-url" help:"Explicit OAuth2 redirect URL. Empty → derived per request: <base-url>/oidc/callback." group:"oidc" env:"OIDC_REDIRECT_URL"`
+	OIDCScopes       []string      `name:"oidc-scopes" help:"Requested OIDC scopes (comma-separated)." group:"oidc" default:"openid,profile,email" env:"OIDC_SCOPES"`
+	OIDCSessionTTL   time.Duration `name:"oidc-session-ttl" help:"Session cookie lifetime." group:"oidc" default:"12h" env:"OIDC_SESSION_TTL"`
+	OIDCCookieSecret string        `name:"oidc-cookie-secret" help:"HMAC key for session cookies (min 32 chars). Empty → random per start: sessions drop on restart and multi-replica setups break." group:"oidc" env:"OIDC_COOKIE_SECRET"`
+
+	// Optional allow-lists on top of authentication. Matters for public IdPs
+	// (Google): without a filter, "authenticated" means anyone with an
+	// account there.
+	OIDCAllowedEmails  []string `name:"oidc-allowed-emails" help:"Allow uploads only for these emails (comma-separated, case-insensitive). Empty → any authenticated user." group:"oidc" env:"OIDC_ALLOWED_EMAILS"`
+	OIDCAllowedDomains []string `name:"oidc-allowed-domains" help:"Allow uploads only for these email domains (comma-separated, case-insensitive). Empty → any authenticated user." group:"oidc" env:"OIDC_ALLOWED_DOMAINS"`
+
 	// --- observability ---
 	SentryDSN string `help:"Sentry DSN. Empty → Sentry disabled." env:"SENTRY_DSN"`
 	LogLevel  string `help:"Log level." default:"info" enum:"debug,info,warn,error" env:"LOG_LEVEL"`
@@ -120,6 +138,7 @@ func Load(args []string) *CLI {
 		kong.UsageOnError(),
 		kong.ExplicitGroups([]kong.Group{
 			{Key: "branding", Title: "Branding flags (UI customization, mirrors server/clientConstants.js)"},
+			{Key: "oidc", Title: "OIDC authentication (optional; gates uploads when configured)"},
 		}),
 		kong.Vars{"version": Version + " (" + Commit + ")"},
 	)

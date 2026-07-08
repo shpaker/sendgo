@@ -167,6 +167,11 @@ export default function(state, emitter) {
         //cancelled. do nothing
         render();
       } else if (err.message === '401') {
+        if (window.OIDC_AUTH && window.OIDC_AUTH.enabled) {
+          // Server-side OIDC session expired mid-visit — re-login and come
+          // back instead of dead-ending on the error page.
+          return window.location.assign('/oidc/login');
+        }
         const refreshed = await state.user.refresh();
         if (refreshed) {
           return emitter.emit('upload');

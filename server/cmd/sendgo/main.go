@@ -21,6 +21,7 @@ import (
 	httpx "github.com/sendgo/sendgo/server/internal/adapter/http"
 	"github.com/sendgo/sendgo/server/internal/adapter/meta"
 	"github.com/sendgo/sendgo/server/internal/adapter/observability"
+	"github.com/sendgo/sendgo/server/internal/adapter/oidcauth"
 	"github.com/sendgo/sendgo/server/internal/adapter/storage"
 	"github.com/sendgo/sendgo/server/internal/config"
 	cryptotokens "github.com/sendgo/sendgo/server/internal/crypto"
@@ -70,6 +71,16 @@ func main() {
 	if err != nil {
 		lg.Error("blob storage init failed", "err", err)
 		os.Exit(1)
+	}
+
+	// Optional OIDC auth: nil when the --oidc-* flags are unset.
+	oidcSvc, err := oidcauth.New(rootCtx, cfg, lg)
+	if err != nil {
+		lg.Error("oidc init failed", "err", err)
+		os.Exit(1)
+	}
+	if oidcSvc != nil {
+		lg.Info("oidc auth enabled: uploads require login", "issuer", cfg.OIDCIssuerURL)
 	}
 
 	tokens := cryptotokens.RandomTokens{}
@@ -122,6 +133,7 @@ func main() {
 		SetPassword:    setPassword,
 		UpdateParams:   updateParams,
 		GetInfo:        getInfo,
+		OIDC:           oidcSvc,
 	})
 
 	// --- Cleanup runner (optional) ---

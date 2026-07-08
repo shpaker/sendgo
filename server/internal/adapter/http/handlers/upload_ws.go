@@ -32,6 +32,11 @@ type UploadWS struct {
 	Initiate       *usecase.InitiateUpload
 	Stream         *usecase.StreamUpload
 	ResolveBaseURL func(*http.Request) string
+	// Authorize, when non-nil, gates the upload (set by the router when OIDC
+	// auth is enabled). It runs after the WS upgrade so the client receives a
+	// parseable {"error": 401} frame — a pre-upgrade reject surfaces as a
+	// generic ConnectionError in app/api.js instead.
+	Authorize func(*http.Request) bool
 }
 
 var upgrader = websocket.Upgrader{
@@ -56,6 +61,12 @@ func (h *UploadWS) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = conn.Close() }()
+
+	if h.Authorize != nil && !h.Authorize(r) {
+		lg.Warn("ws upload: unauthorized", "remote", r.RemoteAddr)
+		writeWSError(conn, http.StatusUnauthorized)
+		return
+	}
 
 	// --- step 1: first message ---
 	_, msg, err := conn.ReadMessage()

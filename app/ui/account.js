@@ -1,5 +1,6 @@
 const html = require('choo/html');
 const Component = require('choo/component');
+const assets = require('../../common/assets');
 
 class Account extends Component {
   constructor(name, state, emit) {
@@ -7,6 +8,10 @@ class Account extends Component {
     this.state = state;
     this.emit = emit;
     this.enabled = state.capabilities.account;
+    // Server-side OIDC auth (see server pages.go). Static per page load:
+    // login/logout are full-page navigations handled by the server, none of
+    // the FxA machinery (state.user, AUTH_CONFIG) is involved.
+    this.oidc = window.OIDC_AUTH || null;
     this.local = state.components[name] = {};
     this.buttonClass = '';
     this.setLocal();
@@ -48,10 +53,16 @@ class Account extends Component {
   }
 
   update() {
+    if (this.oidc && this.oidc.enabled) {
+      return false; // OIDC_AUTH never changes without a page reload
+    }
     return this.setLocal();
   }
 
   createElement() {
+    if (this.oidc && this.oidc.enabled) {
+      return this.createOidcElement();
+    }
     if (!this.enabled) {
       return html`
         <send-account></send-account>
@@ -97,6 +108,59 @@ class Account extends Component {
             <button
               class="block w-full text-left px-4 py-2 text-grey-80 dark:text-grey-30 hover:bg-primary hover:text-white cursor-pointer focus:outline"
               onclick="${e => this.logout(e)}"
+              title="${translate('signOut')}"
+            >
+              ${translate('signOut')}
+            </button>
+          </li>
+        </ul>
+      </send-account>
+    `;
+  }
+
+  createOidcElement() {
+    const translate = this.state.translate;
+    const user = this.oidc.user;
+    if (!user) {
+      // Enabled but anonymous — reachable on the public /download/* pages.
+      return html`
+        <send-account>
+          <button
+            class="px-4 py-2 md:px-8 md:py-4 focus:outline signin border-2 link-primary border-primary hover:border-primary dark:border-primary dark:hover:border-primary"
+            onclick="${e => {
+              e.preventDefault();
+              window.location.assign('/oidc/login');
+            }}"
+            title="${translate('signInOnlyButton')}"
+          >
+            ${translate('signInOnlyButton')}
+          </button>
+        </send-account>
+      `;
+    }
+    const label = user.email || user.name;
+    return html`
+      <send-account class="relative h-8">
+        <input
+          type="image"
+          alt="${label}"
+          class="w-8 h-8 rounded-full border-default text-primary md:text-white focus:outline"
+          src="${assets.get('user.svg')}"
+          onclick="${e => this.avatarClick(e)}"
+        />
+        <ul
+          id="accountMenu"
+          class="invisible absolute top-0 right-0 mt-10 pt-2 pb-2 bg-white shadow-md whitespace-nowrap outline-none z-50 dark:bg-grey-80"
+          onblur="${e => this.hideMenu(e)}"
+        >
+          <li class="p-2 text-grey-60 dark:text-grey-50">${label}</li>
+          <li>
+            <button
+              class="block w-full text-left px-4 py-2 text-grey-80 dark:text-grey-30 hover:bg-primary hover:text-white cursor-pointer focus:outline"
+              onclick="${e => {
+                e.preventDefault();
+                window.location.assign('/oidc/logout');
+              }}"
               title="${translate('signOut')}"
             >
               ${translate('signOut')}
