@@ -3,6 +3,7 @@ package http
 import (
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/sendgo/sendgo/server/internal/adapter/http/handlers"
 	mw "github.com/sendgo/sendgo/server/internal/adapter/http/middleware"
+	"github.com/sendgo/sendgo/server/internal/adapter/oidcauth"
 	"github.com/sendgo/sendgo/server/internal/config"
 	"github.com/sendgo/sendgo/server/internal/port"
 	"github.com/sendgo/sendgo/server/internal/usecase"
@@ -32,6 +34,9 @@ type Deps struct {
 	SetPassword    *usecase.SetPassword
 	UpdateParams   *usecase.UpdateParams
 	GetInfo        *usecase.GetInfo
+	// OIDC is nil unless the --oidc-* flags are configured; nil keeps every
+	// route public, exactly as before the feature existed.
+	OIDC *oidcauth.Service
 }
 
 // NewRouter wires up all routes. The API contract matches
@@ -55,7 +60,23 @@ func NewRouter(d Deps) http.Handler {
 
 	// Public pages / static.
 	pages := NewPages(d.Cfg, d.Meta)
-	r.Get("/", pages.Index)
+
+	// Optional OIDC auth: gate the upload page and register the auth routes.
+	// Only the exact "/" route is gated — the SPA fallback, webpack chunks and
+	// /download/* stay public (receivers need them); the security boundary for
+	// uploads is the /api/ws check below, the "/" redirect is UX.
+	if d.OIDC != nil {
+		oh := &oidcauth.Handlers{
+			Svc:            d.OIDC,
+			ResolveBaseURL: func(req *http.Request) string { return BaseURLFromRequest(d.Cfg, req) },
+		}
+		r.Get("/oidc/login", oh.Login)
+		r.Get("/oidc/callback", oh.Callback)
+		r.Get("/oidc/logout", oh.Logout)
+		r.Get("/", requireSession(d.OIDC, pages.Index))
+	} else {
+		r.Get("/", pages.Index)
+	}
 	// `/download/{id}` and `/download/{id}/{key}` are SPA routes, but the
 	// frontend expects the server to pre-populate `downloadMetadata` and emit
 	// `WWW-Authenticate: send-v1 <nonce>` so the very first HMAC-authenticated
@@ -83,6 +104,16 @@ func NewRouter(d Deps) http.Handler {
 			Initiate:       d.InitiateUpload,
 			Stream:         d.StreamUpload,
 			ResolveBaseURL: func(req *http.Request) string { return BaseURLFromRequest(d.Cfg, req) },
+		}
+		if d.OIDC != nil {
+			// Session cookie + same-origin check. The Origin check matters:
+			// the upgrader's CheckOrigin is permissive, and once a cookie
+			// authorizes uploads a cross-site page could open a WS here with
+			// the victim's cookie attached (CSRF). Without OIDC there is no
+			// ambient credential, so the permissive default stays.
+			ws.Authorize = func(req *http.Request) bool {
+				return wsSameOrigin(req) && d.OIDC.SessionFromRequest(req) != nil
+			}
 		}
 		r.HandleFunc("/ws", ws.Handle)
 
@@ -124,6 +155,40 @@ func NewRouter(d Deps) http.Handler {
 	r.Handle("/*", spaFallback(static.DistFS(), pages))
 
 	return r
+}
+
+// requireSession wraps a page handler: without a valid OIDC session the
+// visitor is sent to the login flow instead.
+func requireSession(svc *oidcauth.Service, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if svc.SessionFromRequest(r) == nil {
+			http.Redirect(w, r, "/oidc/login", http.StatusFound)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// wsSameOrigin verifies that a browser-initiated WS handshake comes from our
+// own origin. No Origin header (curl, ffsend, native clients) → allowed: such
+// clients carry no ambient cookie credential, so CSRF does not apply.
+func wsSameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	host := r.Host
+	if v := r.Header.Get("X-Forwarded-Host"); v != "" {
+		if i := strings.Index(v, ","); i >= 0 {
+			v = v[:i]
+		}
+		host = strings.TrimSpace(v)
+	}
+	return u.Host == host
 }
 
 // spaFallback returns a handler that tries to serve r.URL.Path from distFS;

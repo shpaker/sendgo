@@ -132,7 +132,10 @@ Node server so existing `.env` files keep working. Flag priority:
 **flag > env > default**.
 
 See `./bin/sendgo --help` for the full list (server, limits, meta store,
-blob storage, cleanup, observability, branding).
+blob storage, cleanup, observability, branding, OIDC auth).
+
+Uploads can optionally be gated behind an OpenID Connect provider (downloads
+stay public): see [docs/oidc.md](docs/oidc.md).
 
 ---
 
