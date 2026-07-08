@@ -35,6 +35,12 @@ typo can't silently disable auth.
 
 ## Example: Authentik
 
+**Ready-made demo:** [examples/oidc-authentik](examples/oidc-authentik/) is a
+self-contained `docker compose up -d` stack (Authentik + sendgo) where the
+OAuth2 provider and application are provisioned automatically from a
+[blueprint](examples/oidc-authentik/blueprints/sendgo.yaml). Manual setup
+below.
+
 1. In Authentik create an **OAuth2/OpenID Provider**:
    - Client type: *Confidential*
    - Redirect URI: `https://send.example.com/oidc/callback`

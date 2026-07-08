@@ -1,0 +1,102 @@
+# sendgo + Authentik, self-contained OIDC demo.
+#
+# Usage:
+#   docker compose up -d
+#   open http://localhost:1443   (login: akadmin / see AUTHENTIK_BOOTSTRAP_PASSWORD)
+#
+# The Authentik OAuth2 provider + application are provisioned automatically
+# from blueprints/sendgo.yaml — no clicking through the admin UI.
+#
+# The issuer uses the hostname `authentik.localhost`: browsers resolve
+# *.localhost to 127.0.0.1 (published port 9000), and inside the compose
+# network the same name is an alias of the authentik container — so the
+# `iss` claim matches on both sides of the fence.
+#
+# sendgo restarts until Authentik has booted and applied the blueprint
+# (OIDC discovery is fail-fast by design) — first start takes a minute or two.
+#
+# ⚠️ Demo values (secret key, passwords, cookie secret) — generate your own
+#    for anything real, e.g. `openssl rand -hex 32`.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: authentik
+      POSTGRES_PASSWORD: authentik-db-pass
+      POSTGRES_DB: authentik
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U authentik']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  authentik:
+    image: ghcr.io/goauthentik/server:2025.8
+    command: server
+    environment: &authentik-env
+      AUTHENTIK_SECRET_KEY: demo-not-secret-change-me-9a52ab6c1f
+      AUTHENTIK_REDIS__HOST: redis
+      AUTHENTIK_POSTGRESQL__HOST: postgres
+      AUTHENTIK_POSTGRESQL__USER: authentik
+      AUTHENTIK_POSTGRESQL__NAME: authentik
+      AUTHENTIK_POSTGRESQL__PASSWORD: authentik-db-pass
+      AUTHENTIK_BOOTSTRAP_PASSWORD: sendgo-demo-admin
+      AUTHENTIK_BOOTSTRAP_EMAIL: akadmin@example.com
+    ports:
+      - '9000:9000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - authentik.localhost
+    healthcheck:
+      test: ['CMD', 'ak', 'healthcheck']
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2025.8
+    command: worker
+    environment: *authentik-env
+    volumes:
+      - ./blueprints:/blueprints/custom:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  sendgo:
+    build:
+      context: ../../..
+    restart: unless-stopped # retries until Authentik is up and the blueprint applied
+    environment:
+      OIDC_ISSUER_URL: http://authentik.localhost:9000/application/o/sendgo/
+      OIDC_CLIENT_ID: sendgo
+      OIDC_CLIENT_SECRET: sendgo-demo-client-secret
+      OIDC_COOKIE_SECRET: demo-cookie-secret-32-chars-min!!
+    ports:
+      - '1443:1443'
+    depends_on:
+      authentik:
+        condition: service_healthy
+
+volumes:
+  pg-data:
