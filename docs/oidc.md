@@ -29,9 +29,30 @@ HMAC-signed session cookie (`sendgo_session`) — no session store is needed.
 | `--oidc-scopes` | `OIDC_SCOPES` | `openid,profile,email` | |
 | `--oidc-session-ttl` | `OIDC_SESSION_TTL` | `12h` | Session cookie lifetime. |
 | `--oidc-cookie-secret` | `OIDC_COOKIE_SECRET` | random per start | **Set it in production** (min 32 chars): without it sessions are dropped on every restart, and multiple replicas can't validate each other's cookies. Generate with `openssl rand -hex 32`. |
+| `--oidc-allowed-emails` | `OIDC_ALLOWED_EMAILS` | — | Allow-list of emails (comma-separated, case-insensitive). |
+| `--oidc-allowed-domains` | `OIDC_ALLOWED_DOMAINS` | — | Allow-list of email domains (`example.com` or `@example.com`). |
 
 Setting only some of issuer/client-id/client-secret is a startup error — a
-typo can't silently disable auth.
+typo can't silently disable auth. Same for an allow-list without the core
+OIDC flags.
+
+### Restricting who may upload
+
+By default any authenticated user may upload. That is fine for a private IdP
+(Authentik, Keycloak) where you control the accounts — but with a **public
+IdP like Google, "authenticated" means anyone with a Google account**. Use
+the allow-lists there:
+
+```sh
+--oidc-allowed-domains=your-company.com          # Workspace domain
+--oidc-allowed-emails=alice@gmail.com,bob@gmail.com
+```
+
+A user passes if their email matches either list (email match OR domain
+match). The check runs in the OIDC callback: rejected users get a plain 403
+and no session. When the id_token carries `email_verified: false`, the user
+is rejected regardless of the lists; a missing `email_verified` claim is
+tolerated (many private IdPs don't send it).
 
 ## Example: Authentik
 

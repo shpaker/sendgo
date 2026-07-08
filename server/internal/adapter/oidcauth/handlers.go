@@ -148,6 +148,7 @@ func (h *Handlers) Callback(w http.ResponseWriter, r *http.Request) {
 
 	var claims struct {
 		Email             string `json:"email"`
+		EmailVerified     *bool  `json:"email_verified"`
 		Name              string `json:"name"`
 		PreferredUsername string `json:"preferred_username"`
 	}
@@ -157,6 +158,12 @@ func (h *Handlers) Callback(w http.ResponseWriter, r *http.Request) {
 	email := claims.Email
 	if email == "" {
 		email = claims.PreferredUsername
+	}
+
+	if !h.Svc.authorizeEmail(email, claims.EmailVerified) {
+		lg.Warn("oidc callback: identity not in allow-list", "sub", idToken.Subject, "email", email)
+		http.Error(w, "access denied: this account is not allowed to upload", http.StatusForbidden)
+		return
 	}
 
 	now := time.Now()

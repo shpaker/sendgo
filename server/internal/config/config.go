@@ -69,6 +69,12 @@ type CLI struct {
 	OIDCSessionTTL   time.Duration `name:"oidc-session-ttl" help:"Session cookie lifetime." group:"oidc" default:"12h" env:"OIDC_SESSION_TTL"`
 	OIDCCookieSecret string        `name:"oidc-cookie-secret" help:"HMAC key for session cookies (min 32 chars). Empty → random per start: sessions drop on restart and multi-replica setups break." group:"oidc" env:"OIDC_COOKIE_SECRET"`
 
+	// Optional allow-lists on top of authentication. Matters for public IdPs
+	// (Google): without a filter, "authenticated" means anyone with an
+	// account there.
+	OIDCAllowedEmails  []string `name:"oidc-allowed-emails" help:"Allow uploads only for these emails (comma-separated, case-insensitive). Empty → any authenticated user." group:"oidc" env:"OIDC_ALLOWED_EMAILS"`
+	OIDCAllowedDomains []string `name:"oidc-allowed-domains" help:"Allow uploads only for these email domains (comma-separated, case-insensitive). Empty → any authenticated user." group:"oidc" env:"OIDC_ALLOWED_DOMAINS"`
+
 	// --- observability ---
 	SentryDSN string `help:"Sentry DSN. Empty → Sentry disabled." env:"SENTRY_DSN"`
 	LogLevel  string `help:"Log level." default:"info" enum:"debug,info,warn,error" env:"LOG_LEVEL"`

@@ -40,6 +40,10 @@ type FakeIDP struct {
 	// NoEndSession removes end_session_endpoint from discovery (read at
 	// request time — flip it before oidcauth.New runs discovery).
 	NoEndSession bool
+
+	// ExtraClaims are merged into every issued ID token (win on conflicts,
+	// read at token-request time).
+	ExtraClaims map[string]any
 }
 
 // New starts a fake IdP. The httptest server URL is the issuer.
@@ -93,7 +97,11 @@ func New(t *testing.T) *FakeIDP {
 			return
 		}
 		// The code doubles as the nonce (see package doc).
-		idToken := f.SignIDToken(map[string]any{"nonce": r.Form.Get("code")})
+		extra := map[string]any{"nonce": r.Form.Get("code")}
+		for k, v := range f.ExtraClaims {
+			extra[k] = v
+		}
+		idToken := f.SignIDToken(extra)
 		writeJSON(w, map[string]any{
 			"access_token": "fake-access-token",
 			"token_type":   "Bearer",

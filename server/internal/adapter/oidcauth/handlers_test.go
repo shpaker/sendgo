@@ -16,6 +16,12 @@ import (
 // testHandlers builds Handlers wired to a fake IdP.
 func testHandlers(t *testing.T) (*oidctest.FakeIDP, *oidcauth.Handlers) {
 	t.Helper()
+	return testHandlersOpts(t, nil)
+}
+
+// testHandlersOpts is testHandlers with a config hook.
+func testHandlersOpts(t *testing.T, mutate func(*config.CLI)) (*oidctest.FakeIDP, *oidcauth.Handlers) {
+	t.Helper()
 	idp := oidctest.New(t)
 	cfg := &config.CLI{
 		OIDCIssuerURL:    idp.IssuerURL(),
@@ -25,6 +31,9 @@ func testHandlers(t *testing.T) (*oidctest.FakeIDP, *oidcauth.Handlers) {
 		OIDCSessionTTL:   time.Hour,
 		OIDCScopes:       []string{"openid", "profile", "email"},
 	}
+	if mutate != nil {
+		mutate(cfg)
+	}
 	svc, err := oidcauth.New(context.Background(), cfg, testLogger())
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -33,6 +42,23 @@ func testHandlers(t *testing.T) (*oidctest.FakeIDP, *oidcauth.Handlers) {
 		Svc:            svc,
 		ResolveBaseURL: func(*http.Request) string { return "http://sendgo.test" },
 	}
+}
+
+// doCallback runs login + a well-formed callback and returns the raw
+// response — for tests that expect the callback to refuse a session.
+func doCallback(t *testing.T, h *oidcauth.Handlers) *httptest.ResponseRecorder {
+	t.Helper()
+	authURL, cookies := oidctest.LoginRedirect(t, h)
+	state := authURL.Query().Get("state")
+	nonce := authURL.Query().Get("nonce")
+	req := httptest.NewRequest(http.MethodGet,
+		"/oidc/callback?code="+url.QueryEscape(nonce)+"&state="+url.QueryEscape(state), nil)
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.Callback(rec, req)
+	return rec
 }
 
 func TestLogin_RedirectsWithStatePKCENonce(t *testing.T) {
@@ -273,6 +299,59 @@ func TestLogin_ForcesAccountChooserAfterLocalLogout(t *testing.T) {
 	}
 	if !cleared {
 		t.Error("logged-out marker not cleared by login")
+	}
+}
+
+func TestCallback_RejectsEmailNotInAllowList(t *testing.T) {
+	// Fake IdP issues user@example.com; only boss@corp.com is allowed.
+	_, h := testHandlersOpts(t, func(cfg *config.CLI) {
+		cfg.OIDCAllowedEmails = []string{"boss@corp.com"}
+	})
+	rec := doCallback(t, h)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "sendgo_session" && c.Value != "" {
+			t.Error("session cookie issued despite allow-list rejection")
+		}
+	}
+}
+
+func TestCallback_AllowsListedDomain(t *testing.T) {
+	idp, h := testHandlersOpts(t, func(cfg *config.CLI) {
+		cfg.OIDCAllowedDomains = []string{"@Example.COM"} // normalization: @-prefix + case
+	})
+	ck := oidctest.SessionCookie(t, h) // fatals unless callback returns 303 + cookie
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.AddCookie(ck)
+	if sess := h.Svc.SessionFromRequest(r); sess == nil || sess.Email != idp.Email {
+		t.Fatalf("expected valid session for %s, got %+v", idp.Email, sess)
+	}
+}
+
+func TestCallback_AllowsListedEmailCaseInsensitive(t *testing.T) {
+	_, h := testHandlersOpts(t, func(cfg *config.CLI) {
+		cfg.OIDCAllowedEmails = []string{"USER@example.com"}
+	})
+	oidctest.SessionCookie(t, h)
+}
+
+func TestCallback_RejectsUnverifiedEmailWhenFiltering(t *testing.T) {
+	idp, h := testHandlersOpts(t, func(cfg *config.CLI) {
+		cfg.OIDCAllowedDomains = []string{"example.com"}
+	})
+	idp.ExtraClaims = map[string]any{"email_verified": false}
+	rec := doCallback(t, h)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (unverified email must not pass an allow-list)", rec.Code)
+	}
+}
+
+func TestNew_FilterWithoutOIDCFails(t *testing.T) {
+	cfg := &config.CLI{OIDCAllowedDomains: []string{"example.com"}}
+	if _, err := oidcauth.New(context.Background(), cfg, testLogger()); err == nil {
+		t.Error("allow-list without OIDC core config accepted")
 	}
 }
 

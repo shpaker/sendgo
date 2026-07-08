@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -33,6 +34,10 @@ type Service struct {
 	// whose live SSO session silently re-issues a code — signing out would
 	// appear to do nothing.
 	endSessionURL string
+
+	// Optional allow-lists (lowercased). Both empty → any authenticated user.
+	allowedEmails  map[string]struct{}
+	allowedDomains map[string]struct{}
 }
 
 // New builds the Service, or returns (nil, nil) when the OIDC flags are not
@@ -44,6 +49,10 @@ type Service struct {
 func New(ctx context.Context, cfg *config.CLI, lg *slog.Logger) (*Service, error) {
 	issuer, clientID, secret := cfg.OIDCIssuerURL, cfg.OIDCClientID, cfg.OIDCClientSecret
 	if issuer == "" && clientID == "" && secret == "" {
+		if len(cfg.OIDCAllowedEmails) > 0 || len(cfg.OIDCAllowedDomains) > 0 {
+			// A filter without auth would silently protect nothing.
+			return nil, fmt.Errorf("oidc: --oidc-allowed-emails/--oidc-allowed-domains require OIDC to be configured")
+		}
 		return nil, nil // auth disabled
 	}
 	if issuer == "" || clientID == "" || secret == "" {
@@ -76,13 +85,55 @@ func New(ctx context.Context, cfg *config.CLI, lg *slog.Logger) (*Service, error
 	}
 
 	return &Service{
-		cfg:           cfg,
-		provider:      provider,
-		verifier:      provider.Verifier(&oidc.Config{ClientID: clientID}),
-		codec:         codec{secret: cookieSecret},
-		log:           lg.With("component", "oidc"),
-		endSessionURL: extra.EndSessionEndpoint,
+		cfg:            cfg,
+		provider:       provider,
+		verifier:       provider.Verifier(&oidc.Config{ClientID: clientID}),
+		codec:          codec{secret: cookieSecret},
+		log:            lg.With("component", "oidc"),
+		endSessionURL:  extra.EndSessionEndpoint,
+		allowedEmails:  normalizeSet(cfg.OIDCAllowedEmails, "@"),
+		allowedDomains: normalizeSet(cfg.OIDCAllowedDomains, "@"),
 	}, nil
+}
+
+// normalizeSet lowercases and trims entries (dropping empties) so matching is
+// case-insensitive; stripPrefix tolerates "@example.com"-style domain input.
+func normalizeSet(values []string, stripPrefix string) map[string]struct{} {
+	set := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		v = strings.ToLower(strings.TrimSpace(v))
+		v = strings.TrimPrefix(v, stripPrefix)
+		if v != "" {
+			set[v] = struct{}{}
+		}
+	}
+	return set
+}
+
+// authorizeEmail applies the optional allow-lists to an authenticated
+// identity. verified is the id_token's email_verified claim (nil = the
+// provider didn't send one; many, e.g. plain Authentik setups, don't — only
+// an explicit false rejects).
+func (s *Service) authorizeEmail(email string, verified *bool) bool {
+	if len(s.allowedEmails) == 0 && len(s.allowedDomains) == 0 {
+		return true
+	}
+	e := strings.ToLower(strings.TrimSpace(email))
+	if e == "" {
+		return false // can't match an identity the provider didn't disclose
+	}
+	if verified != nil && !*verified {
+		return false // an unverified address must not pass an allow-list
+	}
+	if _, ok := s.allowedEmails[e]; ok {
+		return true
+	}
+	if _, domain, found := strings.Cut(e, "@"); found {
+		if _, ok := s.allowedDomains[domain]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // SessionFromRequest returns the authenticated session carried by the request
